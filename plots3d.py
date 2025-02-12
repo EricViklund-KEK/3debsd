@@ -3,11 +3,11 @@ import matplotlib.pyplot as plt
 
 
 
-def Scatter3D(points, labels = None, range = None):
+def Scatter3D(points, color = None, labels = None, range = None):
     fig = plt.figure()
     ax = fig.add_subplot(projection='3d')
 
-    ax.scatter(points[:,0],points[:,1],points[:,2])
+    ax.scatter(points[:,0],points[:,1],points[:,2],c=color)
 
     if labels is not None:
         ax.set_xlabel(labels[0])
