@@ -1,6 +1,6 @@
 import numpy as np
 from ebsd3d import EBSD3D
-from voronoi3d import create_voronoi_mesh
+from voronoi3d import create_voronoi_mesh, create_bounded_voronoi_mesh
 from PySide6.QtWidgets import QApplication
 import sys
 import logging
@@ -35,11 +35,12 @@ def load_data(output_folder):
     logging.info(f"Loaded {len(points)} data points")
     return points, euler_angles, phase_ids, mad_values
 
-def create_ebsd_mesh(points, euler_angles, phase_ids, mad_values):
+def create_ebsd_mesh(points, euler_angles, phase_ids, mad_values, voronoi_bounds=None):
     """Create EBSD3D object from data using Voronoi tessellation."""
     logging.info("Creating Voronoi mesh")
+
     # Create base mesh using Voronoi tessellation
-    mesh = create_voronoi_mesh(points)
+    mesh = create_bounded_voronoi_mesh(points, voronoi_bounds=voronoi_bounds)
     
     # Create EBSD3D object with crystallographic data
     logging.info("Creating EBSD3D object")
@@ -73,17 +74,23 @@ def main():
     points, euler_angles, phase_ids, mad_values = load_data(output_folder)
 
     # Subsample points
-    logging.info("Subsampling points (1/100)")
-    points = points[::100]
-    euler_angles = euler_angles[::100]
-    phase_ids = phase_ids[::100]
-    mad_values = mad_values[::100]
+    logging.info("Subsampling points (1/1000)")
+    points = points[::1000]
+    euler_angles = euler_angles[::1000]
+    phase_ids = phase_ids[::1000]
+    mad_values = mad_values[::1000]
     
+    # Calculate bounds as min/max in each dimension
+    min_bounds = np.min(points, axis=0)
+    max_bounds = np.max(points, axis=0)
+    bounds = (min_bounds, max_bounds)
+    logging.info(f"Mesh bounds: min={min_bounds}, max={max_bounds}")
+
     # Create EBSD mesh
-    ebsd_mesh = create_ebsd_mesh(points, euler_angles, phase_ids, mad_values)
+    ebsd_mesh = create_ebsd_mesh(points, euler_angles, phase_ids, mad_values, voronoi_bounds=bounds)   
     
     # Plot the mesh in the GUI
-    window.plot_ebsd_mesh(ebsd_mesh)
+    window.plot_ebsd_mesh(ebsd_mesh, voronoi_bounds=bounds)
     
 
     

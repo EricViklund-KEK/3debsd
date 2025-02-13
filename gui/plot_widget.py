@@ -45,10 +45,63 @@ class EBSDPlotWidget(QWidget):
         self.add_axes()  # Re-add the axes
         logging.debug("Plot cleared")
     
-    def plot_ebsd_mesh(self, ebsd_mesh):
-        """Store the mesh for later plotting"""
+    def draw_bounding_box(self, bounds):
+        """Draw the bounding box based on the provided bounds."""
+        # Unpack the bounds tuple into min and max coordinates
+        min_coords, max_coords = bounds
+        
+        # Create points for the corners of the bounding box
+        corners = np.array([
+            [min_coords[0], min_coords[1], min_coords[2]],  # min x, min y, min z
+            [max_coords[0], min_coords[1], min_coords[2]],  # max x, min y, min z
+            [max_coords[0], max_coords[1], min_coords[2]],  # max x, max y, min z
+            [min_coords[0], max_coords[1], min_coords[2]],  # min x, max y, min z
+            [min_coords[0], min_coords[1], max_coords[2]],  # min x, min y, max z
+            [max_coords[0], min_coords[1], max_coords[2]],  # max x, min y, max z
+            [max_coords[0], max_coords[1], max_coords[2]],  # max x, max y, max z
+            [min_coords[0], max_coords[1], max_coords[2]],  # min x, max y, max z
+        ])
+        
+        # Create lines to represent the edges of the bounding box
+        lines = vtk.vtkCellArray()
+        for i in range(4):
+            lines.InsertNextCell(2)
+            lines.InsertCellPoint(i)       # Bottom face
+            lines.InsertCellPoint((i + 1) % 4)
+            lines.InsertNextCell(2)
+            lines.InsertCellPoint(i + 4)   # Top face
+            lines.InsertCellPoint((i + 1) % 4 + 4)
+            lines.InsertNextCell(2)
+            lines.InsertCellPoint(i)       # Vertical edges
+            lines.InsertCellPoint(i + 4)
+        
+        # Create a polydata object
+        poly_data = vtk.vtkPolyData()
+        points = vtk.vtkPoints()
+        points.SetData(numpy_support.numpy_to_vtk(corners))
+        poly_data.SetPoints(points)
+        poly_data.SetLines(lines)
+        
+        # Create a mapper and actor
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputData(poly_data)
+        box_actor = vtk.vtkActor()
+        box_actor.SetMapper(mapper)
+        box_actor.GetProperty().SetColor(1.0, 0.0, 0.0)  # Red color for the bounding box
+        box_actor.GetProperty().SetLineWidth(2.0)  # Set line width
+        
+        # Add the bounding box actor to the renderer
+        self.renderer.AddActor(box_actor)
+    
+    def plot_ebsd_mesh(self, ebsd_mesh, voronoi_bounds=None):
+        """Store the mesh for later plotting and optionally draw the Voronoi bounding box."""
         self._current_mesh = ebsd_mesh
         self.clear_plot()
+        
+        # Draw the Voronoi bounding box if provided
+        if voronoi_bounds is not None:
+            self.draw_bounding_box(voronoi_bounds)
+            self._voronoi_bounds = voronoi_bounds
     
     def update_plot(self, selected_domains, selected_faces, selected_edges, selected_vertices):
         """Update the plot based on selected components"""
@@ -58,6 +111,10 @@ class EBSDPlotWidget(QWidget):
         try:
             self.clear_plot()
             logging.info("Updating plot with selected components")
+
+            # Draw the Voronoi bounding box if provided
+            if self._voronoi_bounds is not None:
+                self.draw_bounding_box(self._voronoi_bounds)
             
             # Collect all vertices to be displayed
             display_vertices = set()
@@ -134,25 +191,18 @@ class EBSDPlotWidget(QWidget):
             
             # Center camera on selected components
             if len(vertex_coords) > 0:
-                # Calculate bounding box
-                bounds = np.array([
-                    np.min(vertex_coords[:, 0]), np.max(vertex_coords[:, 0]),
-                    np.min(vertex_coords[:, 1]), np.max(vertex_coords[:, 1]),
-                    np.min(vertex_coords[:, 2]), np.max(vertex_coords[:, 2])
-                ])
+                # Calculate bounding box as a tuple of numpy arrays
+                min_coords = np.min(vertex_coords, axis=0)
+                max_coords = np.max(vertex_coords, axis=0)
+                bounds = (min_coords, max_coords)
+                
+                # Draw the bounding box
+                self.draw_bounding_box(bounds)
                 
                 # Calculate center and size of bounding box
-                center = np.array([
-                    (bounds[0] + bounds[1]) / 2,
-                    (bounds[2] + bounds[3]) / 2,
-                    (bounds[4] + bounds[5]) / 2
-                ])
+                center = (min_coords + max_coords) / 2
                 
-                size = np.array([
-                    bounds[1] - bounds[0],
-                    bounds[3] - bounds[2],
-                    bounds[5] - bounds[4]
-                ])
+                size = max_coords - min_coords
                 
                 # Set camera position
                 max_size = np.max(size)
