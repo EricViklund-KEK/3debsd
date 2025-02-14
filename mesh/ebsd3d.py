@@ -1,5 +1,5 @@
 import numpy as np
-from mesh3d import Mesh3D
+from mesh.mesh3d import Mesh3D
 
 class EBSD3D(Mesh3D):
     """A class representing a 3D EBSD (Electron Backscatter Diffraction) dataset.

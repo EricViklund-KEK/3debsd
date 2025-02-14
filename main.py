@@ -1,6 +1,6 @@
 import numpy as np
-from ebsd3d import EBSD3D
-from voronoi3d import create_voronoi_mesh, create_bounded_voronoi_mesh
+from mesh.ebsd3d import EBSD3D
+from mesh.voronoi3d import create_voronoi_mesh, create_bounded_voronoi_mesh
 from PySide6.QtWidgets import QApplication
 import sys
 import logging

@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.spatial import Voronoi
 from scipy.sparse import csr_array, csr_matrix, coo_array, coo_matrix
-from mesh3d import Mesh3D
+from .mesh3d import Mesh3D
 
 def create_voronoi_mesh(points, infinite_point=None):
     """Create a 3D mesh from points using Voronoi tessellation.
@@ -207,4 +207,4 @@ def create_bounded_voronoi_mesh(points, voronoi_bounds):
     #T_FD[ridge_ind,region_ind] = True
 
     # Create and return the mesh object
-    return Mesh3D(vertices, T_VE, T_EF, T_FD) 
+    return Mesh3D(vertices, T_VE, T_EF, T_FD)
