@@ -1,5 +1,10 @@
 import numpy as np
 from mesh.mesh3d import Mesh3D
+from scipy.spatial.transform import Rotation
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import breadth_first_tree
+from scipy.spatial import Delaunay
+
 
 class EBSD3D(Mesh3D):
     """A class representing a 3D EBSD (Electron Backscatter Diffraction) dataset.
@@ -53,6 +58,145 @@ class EBSD3D(Mesh3D):
         else:
             self.phase_ids = None
     
+
+    @property
+    def euler_angles(self):
+        return self._euler_angles
+    
+    @euler_angles.setter
+    def euler_angles(self, euler_angles):
+        if euler_angles is not None:
+            self._euler_angles = euler_angles
+            self._calculate_GBs()
+            self.T_DG = self._find_grains()
+        else:
+            self._euler_angles = None
+
+    @property
+    def A_DGB(self):
+        if not hasattr(self,'_A_DGB'):
+            self._calculate_A_DGB()
+        return self._A_DGB
+    
+    @A_DGB.setter
+    def A_DGB(self, A_DGB):
+        self._A_DGB = A_DGB
+
+
+    def _calculate_GBs(self, tol=5):
+        """Calculate grain boundaries based on misorientation angle.
+        
+        Args:
+            tol (float): Tolerance angle in degrees for identifying grain boundaries
+        
+        Returns:
+            np.ndarray: Array of shape (num_edges,) containing grain boundary IDs
+        """
+        # Calculate misorientation angles between adjacent domains
+        rotations = Rotation.from_euler('XZX',self.euler_angles)
+
+        # domain_connectivity = self.T_FD.T @ self.T_FD
+        # domain_pairs = domain_connectivity.tocoo().nonzero()
+        # misorientations = rotations[domain_pairs[0]].inv() * rotations[domain_pairs[1]]
+        # misorientations = np.linalg.norm(misorientations.as_rotvec(),axis=-1)
+
+
+        domain_pairs = []
+        for face_id in range(self.T_FD.shape[0]):
+            face_domains = self.T_FD[face_id].nonzero()[1]
+            if len(face_domains) == 2:
+                domain_pairs.append(face_domains)
+            else:
+                # TODO: Figure out why this is happening
+                raise ValueError(f"Face {face_id} has {len(face_domains)} domains, expected 2")
+
+        domain_pairs = np.array(domain_pairs).T
+
+        misorientations = rotations[domain_pairs[0]].inv() * rotations[domain_pairs[1]]
+        misorientations = np.linalg.norm(misorientations.as_rotvec(),axis=-1)
+        
+        # Identify grain boundaries based on misorientation angle
+        is_gb = misorientations > np.radians(tol)
+        
+        # Create grain boundary IDs
+        gb_ids = np.zeros(self.num_faces, dtype=bool)
+        gb_ids[is_gb] = True
+        
+        return gb_ids
+    
+    def _calculate_A_DGB(self):
+        gb_ids = self._calculate_GBs()
+
+        T_FDGB = self.T_FD.multiply(gb_ids[:,None])
+        T_FDGB.eliminate_zeros()
+
+        self.A_DGB = T_FDGB.T @ T_FDGB
+        self.A_DGB.eliminate_zeros()
+
+    def _find_grains(self):
+        """Find grains based on domain connectivity.
+        
+        Returns:
+            np.ndarray: Array of shape (num_domains,) containing grain IDs
+        """
+
+
+        A_D = self.T_FD.T @ self.T_FD
+        A_D.eliminate_zeros()
+        A_DnonGB = A_D - self.A_DGB
+        A_DnonGB.eliminate_zeros()
+
+
+        remaining_regions = np.arange(self.num_domains)
+        grains = []
+
+        while remaining_regions.shape[0] > 0:
+            csr_grain = breadth_first_tree(A_DnonGB,remaining_regions[0],directed=False)
+
+            csr_grain = csr_grain.tocoo()
+
+            grain_regions = np.unique(np.concatenate((csr_grain.coords[0],csr_grain.coords[1],remaining_regions[0,None])))
+
+            remaining_regions = np.setdiff1d(remaining_regions,grain_regions,assume_unique=True)
+
+            grains.append(grain_regions)
+
+        T_DG = csr_matrix((self.num_domains,len(grains)),dtype='bool')
+
+        grain_ind, domain_ind = np.array([[i,domain] for i, grain in enumerate(grains) for domain in grain]).T
+
+        T_DG[domain_ind,grain_ind] = True
+
+        return T_DG
+    
+    def _find_GB_faces(self):
+        """Find faces that represent grain boundaries."""
+        B_D = self.T_DG @ self.T_DG.T
+        B_D.eliminate_zeros()
+
+        T_FG = (self.T_FD@(B_D.multiply(self.A_DGB))@self.T_DG).multiply(self.T_FD@self.T_DG)
+        T_FG.eliminate_zeros()
+
+        return T_FG
+    
+    def _triangulate_grain(self, grain_id):
+        """Triangulate a grain's boundary faces."""
+        T_FG = self._find_GB_faces()
+        grain_faces = T_FG[:,grain_id].nonzero()[0]
+        
+        # Create a list of triangles from the grain faces
+        triangles = []
+        for face_id in grain_faces:
+            face_vertices = self.T_EF[face_id].nonzero()[1]
+            if len(face_vertices) > 3:
+                simplices = Delaunay(self.vertices[face_vertices][:,:2]).simplices
+                triangles.extend(face_vertices[simplices])
+            else:
+                triangles.append(face_vertices)
+        
+        return triangles
+
+
     def __repr__(self):
         base_repr = super().__repr__()
         return f"EBSD{base_repr[4:]}"  # Replace "Mesh" with "EBSD" 

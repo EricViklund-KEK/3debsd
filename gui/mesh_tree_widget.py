@@ -1,16 +1,19 @@
-from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
+from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QMenu
+from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt, Signal
 import numpy as np
 
 class MeshTreeWidget(QTreeWidget):
     # Signal emitted when selection changes with lists of selected components
     selectionChanged = Signal(list, list, list, list)  # domains, faces, edges, vertices
+    grainBoundariesToggled = Signal(bool)  # Signal for toggling grain boundaries
     
     def __init__(self):
         super().__init__()
         self.setHeaderLabel("Scene Hierarchy")
         self.setMinimumWidth(250)
         self.setSelectionMode(QTreeWidget.ExtendedSelection)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
         
         # Cache for lazy loading
         self._ebsd_mesh = None
@@ -19,6 +22,7 @@ class MeshTreeWidget(QTreeWidget):
         # Connect signals
         self.itemExpanded.connect(self._on_item_expanded)
         self.itemSelectionChanged.connect(self._on_selection_changed)
+        self.customContextMenuRequested.connect(self._show_context_menu)
     
     def _precompute_connectivity(self, ebsd_mesh):
         """Precompute all connectivity relationships"""
@@ -49,10 +53,38 @@ class MeshTreeWidget(QTreeWidget):
         mesh_item = QTreeWidgetItem(["EBSD Mesh"])
         self.addTopLevelItem(mesh_item)
         
+        # Add visualization options item
+        vis_options = QTreeWidgetItem(["Visualization Options"])
+        mesh_item.addChild(vis_options)
+        
+        # Add grain boundaries option
+        gb_option = QTreeWidgetItem(["Grain Boundaries (Off)"])
+        gb_option.setData(0, Qt.UserRole, ('vis_option', 'grain_boundaries'))
+        gb_option.setCheckState(0, Qt.Unchecked)
+        vis_options.addChild(gb_option)
+        
         # Add domains top level
         num_domains = ebsd_mesh.T_FD.shape[1]
         domains_item = QTreeWidgetItem([f"3D Domains ({num_domains})"])
         mesh_item.addChild(domains_item)
+        
+        # If grains are available, add grain section
+        if hasattr(ebsd_mesh, 'T_DG'):
+            num_grains = ebsd_mesh.T_DG.shape[1]
+            grains_item = QTreeWidgetItem([f"Grains ({num_grains})"])
+            mesh_item.addChild(grains_item)
+            
+            # Add grain items
+            for grain_idx in range(num_grains):
+                domains_in_grain = ebsd_mesh.T_DG[:, grain_idx].nonzero()[0]
+                grain_item = QTreeWidgetItem([f"Grain {grain_idx} ({len(domains_in_grain)} domains)"])
+                grain_item.setData(0, Qt.UserRole, ('grain', grain_idx))
+                
+                # Add a dummy child to show expansion arrow if grain has domains
+                if len(domains_in_grain) > 0:
+                    grain_item.addChild(QTreeWidgetItem([""]))
+                
+                grains_item.addChild(grain_item)
         
         # Add domain items with minimal info - children will be added on expansion
         for domain_idx in range(num_domains):
@@ -74,6 +106,23 @@ class MeshTreeWidget(QTreeWidget):
         
         # Expand the mesh item by default
         mesh_item.setExpanded(True)
+        vis_options.setExpanded(True)
+        
+        # Connect to item changed signal to handle checkboxes
+        self.itemChanged.connect(self._on_item_changed)
+    
+    def _on_item_changed(self, item, column):
+        """Handle checkbox state changes"""
+        data = item.data(0, Qt.UserRole)
+        if not data:
+            return
+            
+        item_type, option = data
+        
+        if item_type == 'vis_option' and option == 'grain_boundaries':
+            show_gb = item.checkState(0) == Qt.Checked
+            item.setText(0, f"Grain Boundaries ({'On' if show_gb else 'Off'})")
+            self.grainBoundariesToggled.emit(show_gb)
     
     def _on_item_expanded(self, item):
         """Lazy load children when item is expanded"""
@@ -89,7 +138,26 @@ class MeshTreeWidget(QTreeWidget):
             item.removeChild(item.child(0))
         
         # Add children based on item type
-        if item_type == 'domain':
+        if item_type == 'grain':
+            domains = self._ebsd_mesh.T_DG[:, idx].nonzero()[0]
+            domains_item = QTreeWidgetItem([f"Domains ({len(domains)})"])
+            item.addChild(domains_item)
+            
+            for domain_idx in domains:
+                domain_info = f"Domain {domain_idx}"
+                if self._ebsd_mesh.euler_angles is not None:
+                    phi1, Phi, phi2 = np.degrees(self._ebsd_mesh.euler_angles[domain_idx])
+                    domain_info += f" - Euler angles: ({phi1:.1f}°, {Phi:.1f}°, {phi2:.1f}°)"
+                
+                domain_item = QTreeWidgetItem([domain_info])
+                domain_item.setData(0, Qt.UserRole, ('domain', domain_idx))
+                
+                if len(self._connectivity['domain_to_faces'][domain_idx]) > 0:
+                    domain_item.addChild(QTreeWidgetItem([""]))
+                
+                domains_item.addChild(domain_item)
+                
+        elif item_type == 'domain':
             faces = self._connectivity['domain_to_faces'][idx]
             faces_item = QTreeWidgetItem([f"Faces ({len(faces)})"])
             item.addChild(faces_item)
@@ -123,6 +191,48 @@ class MeshTreeWidget(QTreeWidget):
                 vertex_info = f"Vertex {vertex_idx}: ({vertex[0]:.1f}, {vertex[1]:.1f}, {vertex[2]:.1f})"
                 vertex_item = QTreeWidgetItem([vertex_info])
                 vertices_item.addChild(vertex_item)
+    
+    def _show_context_menu(self, position):
+        """Show context menu for tree items"""
+        item = self.itemAt(position)
+        if not item:
+            return
+            
+        data = item.data(0, Qt.UserRole)
+        if not data:
+            return
+            
+        item_type, idx = data
+        
+        menu = QMenu()
+        
+        if item_type == 'grain':
+            # Add action to visualize grain boundaries
+            action = QAction("Visualize Grain Boundaries", self)
+            action.triggered.connect(lambda: self._visualize_grain_boundaries(idx))
+            menu.addAction(action)
+        
+        if menu.actions():
+            menu.exec(self.mapToGlobal(position))
+    
+    def _visualize_grain_boundaries(self, grain_idx):
+        """Visualize boundaries for a specific grain"""
+        # Find grain boundary option and check it
+        for i in range(self.topLevelItemCount()):
+            top_item = self.topLevelItem(i)
+            for j in range(top_item.childCount()):
+                vis_item = top_item.child(j)
+                if vis_item.text(0).startswith("Visualization Options"):
+                    for k in range(vis_item.childCount()):
+                        gb_item = vis_item.child(k)
+                        data = gb_item.data(0, Qt.UserRole)
+                        if data and data[0] == 'vis_option' and data[1] == 'grain_boundaries':
+                            gb_item.setCheckState(0, Qt.Checked)
+                            break
+        
+        # Select the grain to visualize its boundaries
+        self.clearSelection()
+        self._on_selection_changed()  # Update plot with grain boundaries enabled
     
     def _on_selection_changed(self):
         """Handle selection changes and emit signal with selected components"""
@@ -161,4 +271,4 @@ class MeshTreeWidget(QTreeWidget):
             list(selected_faces),
             list(selected_edges),
             list(selected_vertices)
-        ) 
+        )

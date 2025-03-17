@@ -3,7 +3,7 @@ from scipy.sparse import csr_matrix
 from mesh.mesh3d import Mesh3D
 from typing import List, Dict, Set
 
-def delete_vertices(mesh: Mesh3D, vertex_indices: List[int]) -> Dict:
+def delete_vertices(mesh: Mesh3D, vertex_indices: List[int]) -> tuple[Mesh3D, Dict]:
     """Removes vertices at the given indices and updates the mesh.
     
     Args:
@@ -11,7 +11,7 @@ def delete_vertices(mesh: Mesh3D, vertex_indices: List[int]) -> Dict:
         vertex_indices (List[int]): Indices of vertices to remove
         
     Returns:
-        Dict: Edit dictionary containing indices of affected edges and removed vertices
+        tuple: Updated mesh and edit dictionary containing indices of affected edges and removed vertices
     """
     # Find edges that use these vertices
     affected_edges = set()
@@ -39,7 +39,7 @@ def delete_vertices(mesh: Mesh3D, vertex_indices: List[int]) -> Dict:
 
     edit_dict['removed_vertices'] = vertex_indices
 
-    return edit_dict
+    return mesh, edit_dict
 
 def remove_edges(mesh: Mesh3D, edge_indices: List[int]) -> Dict:
     """Remove edges and update the mesh.
@@ -80,7 +80,7 @@ def remove_edges(mesh: Mesh3D, edge_indices: List[int]) -> Dict:
             
     return edit_dict
 
-def remove_faces(mesh: Mesh3D, face_indices: List[int]) -> List[int]:
+def remove_faces(mesh: Mesh3D, face_indices: List[int]) -> Dict:
     """Remove faces and update the mesh.
     
     Args:
@@ -88,7 +88,7 @@ def remove_faces(mesh: Mesh3D, face_indices: List[int]) -> List[int]:
         face_indices (List[int]): Indices of faces to remove
         
     Returns:
-        List[int]: Indices of affected domains
+        Dict: Indices of affected domains
     """
     # Check for valid indices
     assert face_indices
@@ -117,7 +117,10 @@ def remove_faces(mesh: Mesh3D, face_indices: List[int]) -> List[int]:
     if affected_domains:
         remove_domains(mesh, list(affected_domains))
 
-    return list(affected_domains)
+    edit_dict = {}
+    edit_dict['affected_domains'] = affected_domains
+
+    return edit_dict
 
 def remove_domains(mesh: Mesh3D, domain_indices: List[int]) -> None:
     """Remove domains and update the mesh.

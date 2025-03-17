@@ -1,7 +1,6 @@
 import numpy as np
-from scipy.sparse import csr_array, csr_matrix
-from scipy.spatial import KDTree
-from typing import Optional, Tuple, Any
+from scipy.sparse import csr_matrix
+from typing import Tuple
 
 class MeshValidationError(Exception):
     """Exception raised for mesh validation errors."""
@@ -64,3 +63,12 @@ class Mesh3D:
     
     def __repr__(self):
         return f"Mesh3D(vertices: {self.num_vertices}, edges: {self.num_edges}, faces: {self.num_faces}, domains: {self.num_domains})"
+    
+    def get_edge_vertices(self, edge_idx: int) -> tuple[int, int]:
+        """Get vertex indices for an edge."""
+        verts = self.T_VE[:, edge_idx].nonzero()[0]
+        return verts[0], verts[1]
+
+    def get_face_edges(self, face_idx: int) -> list[int]:
+        """Get edge indices for a face."""
+        return self.T_EF[:, face_idx].nonzero()[0].tolist()

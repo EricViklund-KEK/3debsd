@@ -7,6 +7,7 @@ import logging
 from gui.main_window import MainWindow
 import traceback
 
+
 # Configure logging at the start of the program
 logging.basicConfig(
     level=logging.DEBUG,
@@ -40,7 +41,7 @@ def create_ebsd_mesh(points, euler_angles, phase_ids, mad_values, voronoi_bounds
     logging.info("Creating Voronoi mesh")
 
     # Create base mesh using Voronoi tessellation
-    mesh = create_bounded_voronoi_mesh(points, voronoi_bounds=voronoi_bounds)
+    mesh = create_voronoi_mesh(points)
     
     # Create EBSD3D object with crystallographic data
     logging.info("Creating EBSD3D object")
@@ -59,9 +60,11 @@ def create_ebsd_mesh(points, euler_angles, phase_ids, mad_values, voronoi_bounds
 def main():
     # Create Qt Application
     app = QApplication(sys.argv)
+    logging.debug("Qt application created")
     
     # Create main window
     window = MainWindow()
+    logging.debug("Main window created")
 
     # Show the window
     window.show()
@@ -98,4 +101,4 @@ def main():
     sys.exit(app.exec())
 
 if __name__ == "__main__":
-    main() 
+    main()

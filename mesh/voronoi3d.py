@@ -1,7 +1,9 @@
 import numpy as np
 from scipy.spatial import Voronoi
 from scipy.sparse import csr_array, csr_matrix, coo_array, coo_matrix
-from .mesh3d import Mesh3D
+from mesh.mesh3d import Mesh3D
+from mesh.geometry.plane import Plane
+from mesh.modification.remove import delete_vertices
 
 def create_voronoi_mesh(points, infinite_point=None):
     """Create a 3D mesh from points using Voronoi tessellation.
@@ -52,11 +54,6 @@ def create_voronoi_mesh(points, infinite_point=None):
         for region_ind in ridge:
             region_ridges[region_ind - 1].append(ridge_ind)
     
-    # Create connectivity matrices
-    #T_EF = csr_array((edges.shape[0],len(ridge_edges)),dtype='bool')
-    #T_FD = csr_array((len(ridge_edges),len(vor.regions)),dtype='bool')
-
-    
     # Create vertex-edge connectivity matrix
     X,Y = np.indices(edges.shape)
     T_VE = coo_matrix((np.ones(edges.flatten().shape[0],dtype='bool'), (edges.flatten(),X.flatten())),shape=(vertices.shape[0],edges.shape[0]))
@@ -68,14 +65,12 @@ def create_voronoi_mesh(points, infinite_point=None):
     
     T_EF = coo_matrix((np.ones(len(edge_ind),dtype='bool'), (edge_ind,ridge_ind)),shape=(edges.shape[0],len(ridge_edges)))
     T_EF = T_EF.tocsr()
-    #T_EF[edge_ind,ridge_ind] = True
     
     ridge_ind = [ridge for region in region_ridges for ridge in region]
     region_ind = np.repeat(np.arange(len(region_ridges)),[len(region_ridges[i]) for i in range(len(region_ridges))])
     
     T_FD = coo_matrix((np.ones(len(ridge_ind),dtype='bool'), (ridge_ind,region_ind)),shape=(len(ridge_edges),points.shape[0]))
     T_FD = T_FD.tocsr()
-    #T_FD[ridge_ind,region_ind] = True
 
     # Create and return the mesh object
     return Mesh3D(vertices, T_VE, T_EF, T_FD)
@@ -119,6 +114,21 @@ def compute_line_box_intersection(p1, p2, bounds):
         return p1 + t * dir_vec
     return None
 
+def plane_mirror(point, plane):
+    """Mirror a point across a plane.
+    
+    Args:
+        point (np.ndarray): Point to mirror
+        plane (Plane): The plane to mirror across
+        
+    Returns:
+        np.ndarray: The mirrored point
+    """
+
+    d = np.dot(plane.normal, point - plane.point)
+    mirrored_point = point - 2 * d * plane.normal
+    return mirrored_point
+
 def create_bounded_voronoi_mesh(points, voronoi_bounds):
     """Create a 3D mesh from points using Voronoi tessellation with bounded region.
     
@@ -132,33 +142,30 @@ def create_bounded_voronoi_mesh(points, voronoi_bounds):
     """
     # Generate Voronoi diagram
     vor = Voronoi(points)
+
+    # Create bounding planes
+    bounding_planes = [
+        Plane(voronoi_bounds[0], np.array([1, 0, 0])),
+        Plane(voronoi_bounds[0], np.array([0, 1, 0])),
+        Plane(voronoi_bounds[0], np.array([0, 0, 1])),
+        Plane(voronoi_bounds[1], np.array([-1, 0, 0])),
+        Plane(voronoi_bounds[1], np.array([0, -1, 0])),
+        Plane(voronoi_bounds[1], np.array([0, 0, -1]))
+    ]
+    
+    # If a region is unbounded, mirror the point across the bounding box
+    mirror_points = []
+    for i, point in enumerate(vor.points):
+        if -1 in vor.regions[vor.point_region[i]]:
+            mirror_points += [plane_mirror(point, plane) for plane in bounding_planes]
+
+    points = np.concatenate((points, mirror_points), axis=0)
+    vor = Voronoi(points)
     vertices = list(vor.vertices)
-    
-    # Process infinite vertices
-    center = vor.points.mean(axis=0)
-    for pointidx, simplex in zip(vor.ridge_points, vor.ridge_vertices):
-        if -1 in simplex:
-            # Get indices of the points forming the ridge
-            i = simplex.index(-1)
-            finite_idx = simplex[1-i]
-            
-            # Get the finite vertex of the ridge
-            finite_vertex = vor.vertices[finite_idx]
-            
-            # Compute direction vector
-            direction = vor.vertices[finite_idx] - center
-            direction = direction / np.linalg.norm(direction)
-            
-            # Find intersection with bounding box
-            far_point = finite_vertex + direction * 100  # Use a point far in the direction
-            intersection = compute_line_box_intersection(finite_vertex, far_point, voronoi_bounds)
-            
-            if intersection is not None:
-                vertices.append(intersection)
-                # Update ridge vertex index to point to new vertex
-                simplex[i] = len(vertices) - 1
-    
-    vertices = np.array(vertices)
+
+    # Handle infinite ridges by adding an "infinite" point
+    infinite_point = np.array([0.0, 0.0, 0.0])
+    vertices = np.concatenate((vertices, infinite_point[None,:]), axis=0)
     
     # Create edge list and ridge-to-edge mapping
     edges = []
@@ -170,21 +177,24 @@ def create_bounded_voronoi_mesh(points, voronoi_bounds):
         new_ridge = []
         # Create edges for each pair of vertices in the ridge
         for vert1, vert2 in zip(ridge, ridge[1:] + ridge[:1]):
-            if vert1 >= 0 and vert2 >= 0:  # Only create edges between valid vertices
-                new_edge = [vert1, vert2]
-                edges.append(new_edge)
-                new_ridge.append(edge_counter)
-                edge_counter += 1
-        if new_ridge:  # Only add ridges that have edges
-            ridge_edges.append(new_ridge)
+            new_edge = [vert1, vert2]
+            edges.append(new_edge)
+            new_ridge.append(edge_counter)
+            edge_counter += 1
+        ridge_edges.append(new_ridge)
     
+    # Remove duplicate edges and update ridge references
     edges = np.array(edges)
+    edges[edges == -1] = edges.max() + 1
+    edges, inverse = np.unique(edges, axis=0, return_inverse=True)
+    ridge_edges = [[inverse[j] for j in ridge_edges[i]] for i in range(len(ridge_edges))]
 
     # Create mapping from ridges to regions
     region_ridges = [[] for _ in range(points.shape[0])]
-    for ridge_ind, ridge_points in enumerate(vor.ridge_points):
-        for point_ind in ridge_points:
-            region_ridges[point_ind].append(ridge_ind)
+
+    for ridge_ind, ridge in enumerate(vor.point_region[vor.ridge_points]):
+        for region_ind in ridge:
+            region_ridges[region_ind - 1].append(ridge_ind)
     
     # Create vertex-edge connectivity matrix
     X,Y = np.indices(edges.shape)
@@ -197,14 +207,21 @@ def create_bounded_voronoi_mesh(points, voronoi_bounds):
     
     T_EF = coo_matrix((np.ones(len(edge_ind),dtype='bool'), (edge_ind,ridge_ind)),shape=(edges.shape[0],len(ridge_edges)))
     T_EF = T_EF.tocsr()
-    #T_EF[edge_ind,ridge_ind] = True
     
     ridge_ind = [ridge for region in region_ridges for ridge in region]
     region_ind = np.repeat(np.arange(len(region_ridges)),[len(region_ridges[i]) for i in range(len(region_ridges))])
     
     T_FD = coo_matrix((np.ones(len(ridge_ind),dtype='bool'), (ridge_ind,region_ind)),shape=(len(ridge_edges),points.shape[0]))
     T_FD = T_FD.tocsr()
-    #T_FD[ridge_ind,region_ind] = True
+
+    mesh = Mesh3D(vertices, T_VE, T_EF, T_FD)
+
+    # Remove vertices outside the bounding box
+    outside_mask = np.any(vertices < voronoi_bounds[0], axis=1) | np.any(vertices > voronoi_bounds[1], axis=1)
+    outside_verts = np.where(outside_mask)[0].tolist()
+    mesh, _ = delete_vertices(mesh, outside_verts)
+        
+
 
     # Create and return the mesh object
-    return Mesh3D(vertices, T_VE, T_EF, T_FD)
+    return mesh

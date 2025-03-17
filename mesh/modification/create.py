@@ -1,8 +1,7 @@
 import numpy as np
 from scipy.sparse import csr_matrix, vstack, hstack
 from mesh.mesh3d import Mesh3D
-from mesh.primitives import Edge, Face, Domain
-from typing import List, Dict, Set, Tuple
+from typing import List, Tuple
 
 def mesh_union(meshes: List[Mesh3D], remove_duplicates: bool = False) -> Mesh3D:
     """Union of multiple meshes.
@@ -16,9 +15,6 @@ def mesh_union(meshes: List[Mesh3D], remove_duplicates: bool = False) -> Mesh3D:
     """
     if not meshes:
         return Mesh3D()
-    
-    if remove_duplicates:
-        raise NotImplementedError("Removing duplicates is not implemented yet")
     
     # Concatenate all vertices
     all_vertices = np.vstack([mesh.vertices for mesh in meshes])
@@ -78,6 +74,60 @@ def mesh_union(meshes: List[Mesh3D], remove_duplicates: bool = False) -> Mesh3D:
         T_VE[v_start:v_start + mesh.num_vertices] = T_VE_sub
         T_EF[e_start:e_end] = T_EF_sub
         T_FD[f_start:f_end] = T_FD_sub
+
+        # Check for duplicates
+        if remove_duplicates:
+            # Find duplicate vertices
+            all_vertices, unique_indices, inverse_indices = np.unique(all_vertices, axis=0, return_index=True, return_inverse=True)
+            
+            # Create mapping from old to new vertex indices
+            vertex_map = np.arange(total_vertices)
+            for i in range(total_vertices):
+                vertex_map[i] = np.where(unique_indices == inverse_indices[i])[0][0]
+            
+            # Update T_VE matrix rows based on new vertex indices
+            row_indices = np.repeat(vertex_map, np.diff(T_VE.indptr))
+            T_VE = csr_matrix((T_VE.data, T_VE.indices, T_VE.indptr), 
+                             shape=(len(all_vertices), T_VE.shape[1]))
+            
+            # Find duplicate edges by comparing vertex pairs
+            edge_vertices = []
+            for j in range(T_VE.shape[1]):
+                edge_verts = vertex_map[T_VE[:,j].nonzero()[0]]
+                edge_vertices.append(tuple(sorted(edge_verts)))
+            
+            _, unique_edge_indices = np.unique(edge_vertices, return_index=True)
+            unique_edge_indices.sort()
+            
+            # Keep only unique edges
+            T_VE = T_VE[:, unique_edge_indices]
+            T_EF = T_EF[unique_edge_indices]
+            
+            # Find duplicate faces by comparing edge sets
+            face_edges = []
+            for j in range(T_EF.shape[1]):
+                face_e = tuple(sorted(T_EF[:,j].nonzero()[0]))
+                face_edges.append(face_e)
+            
+            _, unique_face_indices = np.unique(face_edges, return_index=True)
+            unique_face_indices.sort()
+            
+            # Keep only unique faces
+            T_EF = T_EF[:, unique_face_indices]
+            T_FD = T_FD[unique_face_indices]
+            
+            # Find duplicate domains by comparing face sets
+            domain_faces = []
+            for j in range(T_FD.shape[1]):
+                domain_f = tuple(sorted(T_FD[:,j].nonzero()[0]))
+                domain_faces.append(domain_f)
+            
+            _, unique_domain_indices = np.unique(domain_faces, return_index=True)
+            unique_domain_indices.sort()
+            
+            # Keep only unique domains
+            T_FD = T_FD[:, unique_domain_indices]
+
     
     # Create new mesh with combined data
     return Mesh3D(vertices=all_vertices, T_VE=T_VE, T_EF=T_EF, T_FD=T_FD)
@@ -201,3 +251,15 @@ def create_domains(mesh: Mesh3D, face_indices: List[List[int]]) -> Mesh3D:
     
     # Return the new domain indices
     return new_mesh
+
+
+def mesh_from_indices(mesh: Mesh3D, v_set: set, e_set: set, f_set: set, d_set: set) -> Mesh3D:
+    """Create a new mesh from a subset of the indices of a mesh."""
+    
+    # Create new mesh with selected elements
+    new_vertices = mesh.vertices[list(v_set)]
+    new_T_VE = mesh.T_VE[list(v_set)][:, list(e_set)]
+    new_T_EF = mesh.T_EF[list(e_set)][:, list(f_set)]
+    new_T_FD = mesh.T_FD[list(f_set)][:, list(d_set)]
+    
+    return Mesh3D(new_vertices, new_T_VE, new_T_EF, new_T_FD)
