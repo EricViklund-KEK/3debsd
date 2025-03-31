@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 from mesh.mesh3d import Mesh3D
 from scipy.spatial.transform import Rotation
@@ -5,6 +6,8 @@ from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import breadth_first_tree
 from scipy.spatial import Delaunay
 
+
+logger = logging.getLogger(__name__)
 
 class EBSD3D(Mesh3D):
     """A class representing a 3D EBSD (Electron Backscatter Diffraction) dataset.
@@ -42,48 +45,30 @@ class EBSD3D(Mesh3D):
                 phase identifiers
         """
         super().__init__(vertices, T_VE, T_EF, T_FD)
+
+
         
         # Initialize EBSD-specific attributes
         if euler_angles is not None:
             self.euler_angles = np.asarray(euler_angles, dtype=float)
-            if self.euler_angles.shape[0] != self.num_domains:
-                raise ValueError(f"Number of euler angles ({self.euler_angles.shape[0]}) must match number of domains ({self.num_domains})")
+            # if self.euler_angles.shape[0] != self.num_domains:
+            #     raise ValueError(f"Number of euler angles ({self.euler_angles.shape[0]}) must match number of domains ({self.num_domains})")
         else:
             self.euler_angles = None
             
         if phase_ids is not None:
             self.phase_ids = np.asarray(phase_ids, dtype=int)
-            if self.phase_ids.shape[0] != self.num_domains:
-                raise ValueError(f"Number of phase IDs ({self.phase_ids.shape[0]}) must match number of domains ({self.num_domains})")
+            # if self.phase_ids.shape[0] != self.num_domains:
+            #     raise ValueError(f"Number of phase IDs ({self.phase_ids.shape[0]}) must match number of domains ({self.num_domains})")
         else:
             self.phase_ids = None
-    
 
-    @property
-    def euler_angles(self):
-        return self._euler_angles
-    
-    @euler_angles.setter
-    def euler_angles(self, euler_angles):
-        if euler_angles is not None:
-            self._euler_angles = euler_angles
-            self._calculate_GBs()
-            self.T_DG = self._find_grains()
-        else:
-            self._euler_angles = None
-
-    @property
-    def A_DGB(self):
-        if not hasattr(self,'_A_DGB'):
-            self._calculate_A_DGB()
-        return self._A_DGB
-    
-    @A_DGB.setter
-    def A_DGB(self, A_DGB):
-        self._A_DGB = A_DGB
+        # self.A_DGB = self._calculate_A_DGB()
+        # self.T_DG = self._find_grains()
+        # self.T_FG = self._find_GB_faces()
 
 
-    def _calculate_GBs(self, tol=5):
+    def _calculate_GBs(self, tol=10):
         """Calculate grain boundaries based on misorientation angle.
         
         Args:
@@ -130,8 +115,10 @@ class EBSD3D(Mesh3D):
         T_FDGB = self.T_FD.multiply(gb_ids[:,None])
         T_FDGB.eliminate_zeros()
 
-        self.A_DGB = T_FDGB.T @ T_FDGB
-        self.A_DGB.eliminate_zeros()
+        A_DGB = T_FDGB.T @ T_FDGB
+        A_DGB.eliminate_zeros()
+
+        return A_DGB
 
     def _find_grains(self):
         """Find grains based on domain connectivity.
@@ -176,27 +163,53 @@ class EBSD3D(Mesh3D):
 
         T_FG = (self.T_FD@(B_D.multiply(self.A_DGB))@self.T_DG).multiply(self.T_FD@self.T_DG)
         T_FG.eliminate_zeros()
-
+        
+        # Log the number of grain boundary faces
+        num_gb_faces = T_FG.nnz
+        logger.info(f"Found {num_gb_faces} grain boundary faces")
+        
         return T_FG
     
     def _triangulate_grain(self, grain_id):
-        """Triangulate a grain's boundary faces."""
-        T_FG = self._find_GB_faces()
-        grain_faces = T_FG[:,grain_id].nonzero()[0]
+        """Triangulate a grain's boundary faces using fan triangulation."""
+        grain_faces = self.T_FG[:,grain_id].nonzero()[0]
+        
+        # If no grain boundary faces, return empty list
+        if len(grain_faces) == 0:
+            logger.debug(f"No boundary faces found for grain {grain_id}")
+            return []
+        
+        logger.debug(f"Triangulating {len(grain_faces)} faces for grain {grain_id}")
         
         # Create a list of triangles from the grain faces
+        T_VF = self.T_VE @ self.T_EF
+
         triangles = []
         for face_id in grain_faces:
-            face_vertices = self.T_EF[face_id].nonzero()[1]
-            if len(face_vertices) > 3:
-                simplices = Delaunay(self.vertices[face_vertices][:,:2]).simplices
-                triangles.extend(face_vertices[simplices])
-            else:
+            face_vertices = T_VF[:,face_id].nonzero()[0]
+            
+            if len(face_vertices) < 3:
+                logger.warning(f"Face {face_id} has only {len(face_vertices)} vertices, skipping")
+                continue
+                
+            # For triangular faces, just add them directly
+            if len(face_vertices) == 3:
                 triangles.append(face_vertices)
+                continue
+                
+            # For faces with more than 3 vertices, use fan triangulation
+            # Fan triangulation creates triangles by connecting the first vertex to all others in sequence
+            for i in range(1, len(face_vertices) - 1):
+                triangles.append([face_vertices[0], face_vertices[i], face_vertices[i+1]])
         
+        logger.debug(f"Created {len(triangles)} triangles for grain {grain_id}")
         return triangles
+
+    def GB_mesh(self, id: int) -> list[list[int, int, int]]:
+        """Return the mesh of a grain boundary."""
+        return self._triangulate_grain(id)
 
 
     def __repr__(self):
         base_repr = super().__repr__()
-        return f"EBSD{base_repr[4:]}"  # Replace "Mesh" with "EBSD" 
+        return f"EBSD{base_repr[4:]}"  # Replace "Mesh" with "EBSD"

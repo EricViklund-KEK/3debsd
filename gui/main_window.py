@@ -16,21 +16,13 @@ class MainWindow(QMainWindow):
         splitter = QSplitter()
         layout.addWidget(splitter)
         
-        # Create tree widget
-        self.tree_widget = MeshTreeWidget()
-        splitter.addWidget(self.tree_widget)
-        
         # Create plot widget
         self.plot_widget = EBSDPlotWidget()
         splitter.addWidget(self.plot_widget)
         
         # Set window size
         self.resize(900, 600)
-        
-        # Connect tree selection to plot updates
-        self.tree_widget.selectionChanged.connect(self.plot_widget.update_plot)
     
     def plot_ebsd_mesh(self, ebsd_mesh, voronoi_bounds=None):
         """Plot the EBSD mesh in the plot widget and update the tree"""
         self.plot_widget.plot_ebsd_mesh(ebsd_mesh, voronoi_bounds=voronoi_bounds)
-        self.tree_widget.update_mesh(ebsd_mesh) 

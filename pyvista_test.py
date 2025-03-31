@@ -1,29 +1,16 @@
+import logging
+import pyvista as pv
 import numpy as np
+
 from mesh.ebsd3d import EBSD3D
 from mesh.voronoi3d import create_voronoi_mesh, create_bounded_voronoi_mesh
-from PySide6.QtWidgets import QApplication
-import sys
-import logging
-from gui.main_window import MainWindow
-import traceback
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
-# Configure logging at the start of the program
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),  # Print to console
-        logging.FileHandler('debug.log')    # Also save to file
-    ]
-)
 
-def exception_hook(exctype, value, tb):
-    """Global exception handler to log unhandled exceptions"""
-    logging.error("Uncaught exception:", exc_info=(exctype, value, tb))
-    sys.__excepthook__(exctype, value, tb)  # Call the default handler as well
 
-sys.excepthook = exception_hook
 
 def load_data(output_folder):
     """Load processed EBSD data from numpy arrays."""
@@ -58,23 +45,13 @@ def create_ebsd_mesh(points, euler_angles, phase_ids, mad_values, voronoi_bounds
         confidence_indices=mad_values
     )
     
-    logging.info(f"Created EBSD mesh with {ebsd_mesh.T_DG.shape[1]} grains")
+    # logging.info(f"Created EBSD mesh with {ebsd_mesh.T_DG.shape[1]} grains")
     
     return ebsd_mesh
 
 def main():
-    # Create Qt Application
-    app = QApplication(sys.argv)
-    logging.debug("Qt application created")
-    
-    # Create main window
-    window = MainWindow()
-    logging.debug("Main window created")
 
-    # Show the window
-    window.show()
-    logging.info("GUI application started")    
-    
+
     # Set the output folder path where numpy arrays are stored
     output_folder = "output"  # Adjust this path as needed
     
@@ -85,14 +62,22 @@ def main():
     logging.info(f"Original data size: {len(points)} points")
     
     # Use smaller subsampling value for testing
-    subsample_rate = 500  # Use a smaller value like 100 or 200 for testing
-    logging.info(f"Subsampling points (1/{subsample_rate})")
+    # subsample_rate = 50  # Use a smaller value like 100 or 200 for testing
+    # logging.info(f"Subsampling points (1/{subsample_rate})")
     
-    points = points[::subsample_rate]
-    euler_angles = euler_angles[::subsample_rate]
-    phase_ids = phase_ids[::subsample_rate]
-    mad_values = mad_values[::subsample_rate]
+    np.random.seed(0)
+    subsample = np.random.randint(0,points.shape[0],size=10000)
+
+    # points = points[::subsample_rate]
+    # euler_angles = euler_angles[::subsample_rate]
+    # phase_ids = phase_ids[::subsample_rate]
+    # mad_values = mad_values[::subsample_rate]
     
+    points = points[subsample]
+    euler_angles = euler_angles[subsample]
+    phase_ids = phase_ids[subsample]
+    mad_values = mad_values[subsample]
+
     logging.info(f"Subsampled to {len(points)} points")
     
     # Calculate bounds as min/max in each dimension
@@ -104,15 +89,42 @@ def main():
     # Create EBSD mesh
     ebsd_mesh = create_ebsd_mesh(points, euler_angles, phase_ids, mad_values, voronoi_bounds=bounds)   
     
-    if ebsd_mesh.T_DG.shape[1] == 0:
-        logging.error("No grains found in the mesh! Check the data and parameters.")
-        return
-        
-    # Plot the mesh in the GUI
-    window.plot_ebsd_mesh(ebsd_mesh, voronoi_bounds=bounds)
+    # if ebsd_mesh.T_DG.shape[1] == 0:
+    #     logging.error("No grains found in the mesh! Check the data and parameters.")
+    #     return
     
-    # Start the application
-    sys.exit(app.exec())
+    T_VF = ebsd_mesh.T_VE @ ebsd_mesh.T_EF
+    faces = []
+    for face in range(T_VF.shape[1]):
+        verts = T_VF[:, face].nonzero()[0]
+        faces.append(verts)
+        
+        
+
+    plot_faces = []
+    for face in faces:
+        face_verts = ebsd_mesh.vertices[face]
+        if (face_verts < min_bounds).any() or (face_verts > max_bounds).any():
+            logger.debug(f"Face {face_verts} is outside bounds")
+        else:
+            plot_faces.append(face)
+
+    unique_indices = set()
+    for face in plot_faces:
+        for vert in face:
+            unique_indices.add(vert)
+
+    new_indices = {old: new for new, old in enumerate(unique_indices)}
+    new_faces = []
+    for face in plot_faces:
+        new_faces.append([new_indices[old] for old in face])
+
+    vertices = ebsd_mesh.vertices[list(unique_indices)]
+
+
+    # plot_mesh = pv.PolyData.from_regular_faces(ebsd_mesh.vertices, [plot_faces[0]])
+    plot_mesh = pv.PolyData.from_irregular_faces(vertices, new_faces)
+    plot_mesh.plot(cpos='xy', show_edges=True)
 
 if __name__ == "__main__":
     main()
