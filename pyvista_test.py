@@ -1,12 +1,17 @@
 import logging
 import pyvista as pv
 import numpy as np
+from scipy.sparse.csgraph import breadth_first_tree
+from scipy.sparse import csr_matrix
+from scipy.spatial.transform import Rotation
 
 from mesh.ebsd3d import EBSD3D
 from mesh.voronoi3d import create_voronoi_mesh, create_bounded_voronoi_mesh
+from mesh.mesh3d import Mesh3D
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 
 
@@ -23,31 +28,80 @@ def load_data(output_folder):
     logging.info(f"Loaded {len(points)} data points")
     return points, euler_angles, phase_ids, mad_values
 
-def create_ebsd_mesh(points, euler_angles, phase_ids, mad_values, voronoi_bounds=None):
-    """Create EBSD3D object from data using Voronoi tessellation."""
-    logging.info("Creating Voronoi mesh")
 
-    # Create base mesh using Voronoi tessellation
-    mesh = create_voronoi_mesh(points)
+def unstructured_grid_from_mesh(mesh, bounds):
+    """Convert mesh to PyVista UnstructuredGrid."""
+    logging.info("Converting mesh to PyVista UnstructuredGrid")
     
-    logging.info(f"Created mesh with {len(mesh.vertices)} vertices, {mesh.T_VE.shape[1]} edges, " 
-                f"{mesh.T_EF.shape[0]} faces, and {mesh.T_FD.shape[1]} domains")
+    T_VD = mesh.T_VE @ mesh.T_EF @ mesh.T_FD
+    cell_types = [pv.CellType.CONVEX_POINT_SET] * mesh.num_domains
     
-    # Create EBSD3D object with crystallographic data
-    logging.info("Creating EBSD3D object")
-    ebsd_mesh = EBSD3D(
-        vertices=mesh.vertices,
-        T_VE=mesh.T_VE,
-        T_EF=mesh.T_EF,
-        T_FD=mesh.T_FD,
-        euler_angles=euler_angles,
-        phase_ids=phase_ids,
-        confidence_indices=mad_values
-    )
+    used_vertices = set()
+    cell_point_ids = []
+
+    for domain in range(mesh.num_domains):
+        domain_vertices = T_VD[:,domain].nonzero()[0]
+        used_vertices.update(domain_vertices)
+
+        cell_point_ids.append(domain_vertices)
+
+
+    index_map = {old_idx: new_idx for new_idx, old_idx in enumerate(sorted(used_vertices))}
+
+    cell_array = []
+    for cell in cell_point_ids:
+        new_cell = [index_map[pt] for pt in cell]
+        cell_array.append(len(new_cell))
+        cell_array.extend(new_cell)
+
+    cells = cell_array
+    points = mesh.vertices[sorted(used_vertices)]
+
     
-    # logging.info(f"Created EBSD mesh with {ebsd_mesh.T_DG.shape[1]} grains")
+    try:
+        grid = pv.UnstructuredGrid(cells, cell_types, points)
+    except Exception as e:
+        logging.error(f"Error creating UnstructuredGrid: {e}")
+        raise
+
+    if bounds is not None:
+        roi = pv.Box(bounds=bounds)
+        grid = grid.clip_box([-1,1,-1,1,-1,1], invert=False)
+
+    logging.info(f"UnstructuredGrid created with {grid.n_cells} cells and {grid.n_points} points")
+
+    return grid
+
+def polydata_from_mesh(mesh: Mesh3D, bounds):
+    """Convert mesh to PyVista PolyData."""
+    logging.info("Converting mesh to PyVista PolyData")
+
+    id = 0
     
-    return ebsd_mesh
+    T_VF = mesh.T_VE @ mesh.T_EF
+
+    used_vertices = set()
+    for face in mesh.T_FG[:,[id]].tocoo().coords[0]:
+        face_vertices = T_VF[:,[face]].nonzero()[0]
+        used_vertices.update(face_vertices)
+
+    index_map = {old_idx: new_idx for new_idx, old_idx in enumerate(sorted(used_vertices))}
+
+    faces = []
+    for face in mesh.T_FG[:,[id]].tocoo().coords[0]:
+        face_vertices = T_VF[:,[face]].nonzero()[0]
+        new_face = [index_map[pt] for pt in face_vertices]
+        faces.append(new_face)
+
+    points = mesh.vertices[sorted(used_vertices)]
+
+    polydata = pv.PolyData.from_irregular_faces(points, faces)
+
+    if bounds is not None:
+        roi = pv.Box(bounds=bounds)
+        polydata = polydata.clip_box(roi, invert=False)
+
+    return polydata
 
 def main():
 
@@ -66,7 +120,7 @@ def main():
     # logging.info(f"Subsampling points (1/{subsample_rate})")
     
     np.random.seed(0)
-    subsample = np.random.randint(0,points.shape[0],size=10000)
+    subsample = np.random.randint(0,points.shape[0],size=50)
 
     # points = points[::subsample_rate]
     # euler_angles = euler_angles[::subsample_rate]
@@ -86,45 +140,25 @@ def main():
     bounds = (min_bounds, max_bounds)
     logging.info(f"Mesh bounds: min={min_bounds}, max={max_bounds}")
 
-    # Create EBSD mesh
-    ebsd_mesh = create_ebsd_mesh(points, euler_angles, phase_ids, mad_values, voronoi_bounds=bounds)   
+    point_data = {
+        'point_coordinates': points,
+        'euler_angles': euler_angles,
+    }
+    mesh = Mesh3D.from_voronoi_tessellation(point_data)
+    logging.info(f"Mesh: {mesh}")
+
+    bounds = np.array([min_bounds[0], max_bounds[0], min_bounds[1], max_bounds[1], min_bounds[2], max_bounds[2]])
+    logging.info(f"Bounds for clipping: {bounds}")
     
-    # if ebsd_mesh.T_DG.shape[1] == 0:
-    #     logging.error("No grains found in the mesh! Check the data and parameters.")
-    #     return
-    
-    T_VF = ebsd_mesh.T_VE @ ebsd_mesh.T_EF
-    faces = []
-    for face in range(T_VF.shape[1]):
-        verts = T_VF[:, face].nonzero()[0]
-        faces.append(verts)
-        
-        
+    polydata = polydata_from_mesh(mesh, bounds)
+    logging.info(f"PolyData: {polydata}")
 
-    plot_faces = []
-    for face in faces:
-        face_verts = ebsd_mesh.vertices[face]
-        if (face_verts < min_bounds).any() or (face_verts > max_bounds).any():
-            logger.debug(f"Face {face_verts} is outside bounds")
-        else:
-            plot_faces.append(face)
-
-    unique_indices = set()
-    for face in plot_faces:
-        for vert in face:
-            unique_indices.add(vert)
-
-    new_indices = {old: new for new, old in enumerate(unique_indices)}
-    new_faces = []
-    for face in plot_faces:
-        new_faces.append([new_indices[old] for old in face])
-
-    vertices = ebsd_mesh.vertices[list(unique_indices)]
+    plotter = pv.Plotter()
+    plotter.add_mesh(polydata, show_edges=True, color='red')
+    plotter.show()
 
 
-    # plot_mesh = pv.PolyData.from_regular_faces(ebsd_mesh.vertices, [plot_faces[0]])
-    plot_mesh = pv.PolyData.from_irregular_faces(vertices, new_faces)
-    plot_mesh.plot(cpos='xy', show_edges=True)
+
 
 if __name__ == "__main__":
     main()

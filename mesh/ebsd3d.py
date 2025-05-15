@@ -30,7 +30,7 @@ class EBSD3D(Mesh3D):
         _kdtree (KDTree): Internal KDTree structure for efficient nearest neighbor queries
     """
     
-    def __init__(self, vertices, T_VE=None, T_EF=None, T_FD=None, 
+    def __init__(self, points, vertices, PDmap, T_VE=None, T_EF=None, T_FD=None, 
                  euler_angles=None, phase_ids=None, confidence_indices=None):
         """Initialize the 3D EBSD dataset.
         
@@ -44,7 +44,7 @@ class EBSD3D(Mesh3D):
             phase_ids (np.ndarray, optional): Array of shape (num_domains,) containing
                 phase identifiers
         """
-        super().__init__(vertices, T_VE, T_EF, T_FD)
+        super().__init__(points, vertices, PDmap, T_VE, T_EF, T_FD)
 
 
         
@@ -64,11 +64,12 @@ class EBSD3D(Mesh3D):
             self.phase_ids = None
 
         # self.A_DGB = self._calculate_A_DGB()
-        # self.T_DG = self._find_grains()
-        # self.T_FG = self._find_GB_faces()
+        self.A_DGB = self._calculate_GBs()
+        self.T_DG = self._find_grains()
+        self.T_FG = self._find_GB_faces()
 
 
-    def _calculate_GBs(self, tol=10):
+    def _calculate_GBs(self, tol=5):
         """Calculate grain boundaries based on misorientation angle.
         
         Args:
@@ -79,6 +80,7 @@ class EBSD3D(Mesh3D):
         """
         # Calculate misorientation angles between adjacent domains
         rotations = Rotation.from_euler('XZX',self.euler_angles)
+        rotations = rotations[self.PDmap]
 
         # domain_connectivity = self.T_FD.T @ self.T_FD
         # domain_pairs = domain_connectivity.tocoo().nonzero()
@@ -103,12 +105,17 @@ class EBSD3D(Mesh3D):
         # Identify grain boundaries based on misorientation angle
         is_gb = misorientations > np.radians(tol)
         
-        # Create grain boundary IDs
-        gb_ids = np.zeros(self.num_faces, dtype=bool)
-        gb_ids[is_gb] = True
+        T_FDGB = self.T_FD.multiply(is_gb[:,None])
+        T_FDGB.eliminate_zeros()
+
+        # # Create grain boundary IDs
+        # gb_ids = np.zeros(self.num_faces, dtype=bool)
+        # gb_ids[is_gb] = True
         
-        return gb_ids
+        # return gb_ids
     
+        return T_FDGB.T @ T_FDGB
+
     def _calculate_A_DGB(self):
         gb_ids = self._calculate_GBs()
 

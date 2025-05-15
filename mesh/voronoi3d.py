@@ -87,7 +87,7 @@ def create_voronoi_mesh(points, infinite_point=None):
     # T_FD = T_FD.tocsr()
 
     # Create and return the mesh object
-    return Mesh3D(vertices, T_VE, T_EF, T_FD)
+    return Mesh3D(points, vertices, vor.point_region, T_VE, T_EF, T_FD)
 
 def compute_line_box_intersection(p1, p2, bounds):
     """Compute intersection of a line segment with a bounding box.
