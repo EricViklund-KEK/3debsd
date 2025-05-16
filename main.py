@@ -1,118 +1,55 @@
 import numpy as np
-from mesh.ebsd3d import EBSD3D
-from mesh.voronoi3d import create_voronoi_mesh, create_bounded_voronoi_mesh
-from PySide6.QtWidgets import QApplication
-import sys
-import logging
-from gui.main_window import MainWindow
-import traceback
+from scipy.spatial import Voronoi
+from scipy.sparse import csr_matrix
 
 
-# Configure logging at the start of the program
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),  # Print to console
-        logging.FileHandler('debug.log')    # Also save to file
-    ]
-)
+def connectivity_matrices_from_voronoi(vor: Voronoi):
+    vertices = vor.vertices
 
-def exception_hook(exctype, value, tb):
-    """Global exception handler to log unhandled exceptions"""
-    logging.error("Uncaught exception:", exc_info=(exctype, value, tb))
-    sys.__excepthook__(exctype, value, tb)  # Call the default handler as well
+    edges = []
+    ridge_edges = []
+    i = 0
 
-sys.excepthook = exception_hook
+    for ridge in vor.ridge_vertices:
+        new_ridge = []
+        for (vert1, vert2) in zip(ridge,ridge[1:]+ridge[:1]):
+            """create new edge"""
+            new_edge = [vert1,vert2]
+            edges.append(new_edge)
 
-def load_data(output_folder):
-    """Load processed EBSD data from numpy arrays."""
-    logging.info(f"Loading data from {output_folder}")
-    points = np.load(f'{output_folder}/points.npy')
-    euler_angles = np.load(f'{output_folder}/euler_flat.npy')
-    phase_ids = np.load(f'{output_folder}/phase_flat.npy')
-    mad_values = np.load(f'{output_folder}/mad_flat.npy')  # confidence measure
-    
-    logging.info(f"Loaded {len(points)} data points")
-    return points, euler_angles, phase_ids, mad_values
+            """add edge to ridge"""
+            new_ridge.append(i)
+            i += 1
 
-def create_ebsd_mesh(points, euler_angles, phase_ids, mad_values, voronoi_bounds=None):
-    """Create EBSD3D object from data using Voronoi tessellation."""
-    logging.info("Creating Voronoi mesh")
+        ridge_edges.append(new_ridge)
 
-    # Create base mesh using Voronoi tessellation
-    mesh = create_voronoi_mesh(points)
-    
-    logging.info(f"Created mesh with {len(mesh.vertices)} vertices, {mesh.T_VE.shape[1]} edges, " 
-                f"{mesh.T_EF.shape[0]} faces, and {mesh.T_FD.shape[1]} domains")
-    
-    # Create EBSD3D object with crystallographic data
-    logging.info("Creating EBSD3D object")
-    ebsd_mesh = EBSD3D(
-        vertices=mesh.vertices,
-        T_VE=mesh.T_VE,
-        T_EF=mesh.T_EF,
-        T_FD=mesh.T_FD,
-        euler_angles=euler_angles,
-        phase_ids=phase_ids,
-        confidence_indices=mad_values
-    )
-    
-    logging.info(f"Created EBSD mesh with {ebsd_mesh.T_DG.shape[1]} grains")
-    
-    return ebsd_mesh
+    edges, inverse = np.unique(np.array(edges),axis=0,return_inverse=True)
+    ridge_edges = [[inverse[j] for j in ridge_edges[i]] for i in range(len(ridge_edges))]
+
+    X,Y = np.indices(edges.shape)
+
+    T_VE = csr_matrix((np.ones(edges.flatten().shape[0], dtype='bool'), (edges.flatten(),X.flatten())), shape=())
+
 
 def main():
-    # Create Qt Application
-    app = QApplication(sys.argv)
-    logging.debug("Qt application created")
-    
-    # Create main window
-    window = MainWindow()
-    logging.debug("Main window created")
+    import numpy as np
 
-    # Show the window
-    window.show()
-    logging.info("GUI application started")    
-    
-    # Set the output folder path where numpy arrays are stored
-    output_folder = "output"  # Adjust this path as needed
-    
-    # Load processed data
-    points, euler_angles, phase_ids, mad_values = load_data(output_folder)
+    euler = np.load('./output/euler_flat.npy')
+    points = np.load('./output/points.npy')
+    Nb = np.load('./output/Nb_flat.npy')
+    Sn = np.load('./output/Sn_flat.npy')
 
-    # Subsample points for performance but ensure we have enough for visualization
-    logging.info(f"Original data size: {len(points)} points")
-    
-    # Use smaller subsampling value for testing
-    subsample_rate = 500  # Use a smaller value like 100 or 200 for testing
-    logging.info(f"Subsampling points (1/{subsample_rate})")
-    
-    points = points[::subsample_rate]
-    euler_angles = euler_angles[::subsample_rate]
-    phase_ids = phase_ids[::subsample_rate]
-    mad_values = mad_values[::subsample_rate]
-    
-    logging.info(f"Subsampled to {len(points)} points")
-    
-    # Calculate bounds as min/max in each dimension
-    min_bounds = np.min(points, axis=0)
-    max_bounds = np.max(points, axis=0)
-    bounds = (min_bounds, max_bounds)
-    logging.info(f"Mesh bounds: min={min_bounds}, max={max_bounds}")
 
-    # Create EBSD mesh
-    ebsd_mesh = create_ebsd_mesh(points, euler_angles, phase_ids, mad_values, voronoi_bounds=bounds)   
-    
-    if ebsd_mesh.T_DG.shape[1] == 0:
-        logging.error("No grains found in the mesh! Check the data and parameters.")
-        return
-        
-    # Plot the mesh in the GUI
-    window.plot_ebsd_mesh(ebsd_mesh, voronoi_bounds=bounds)
-    
-    # Start the application
-    sys.exit(app.exec())
+    nonzero = list(not(np.array_equal(euler[i,:],np.array((0.0,0.0,0.0)))) for i in range(euler.shape[0]))
+
+    np.random.seed(0)
+    subsample = np.random.randint(0,len(nonzero),size=50000)
+
+    vor = Voronoi(points[nonzero][subsample])
+
+
+
+
 
 if __name__ == "__main__":
     main()
