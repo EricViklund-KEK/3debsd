@@ -38,7 +38,8 @@ def load_and_process_h5_files(data_folder, output_folder):
     with h5py.File(os.path.join(data_folder, sorted_files[0]), 'r') as f:
         reference_image = np.array(f['1/EDS/Data/Window Integral/Sn Lα1']).reshape(image_resolution[1], 
                                                                                   image_resolution[0])
-    
+    points = []
+    euler_flat = []
     # Process each file
     for i, file in enumerate(sorted_files):
         with h5py.File(os.path.join(data_folder, file), 'r') as f:
@@ -53,9 +54,11 @@ def load_and_process_h5_files(data_folder, output_folder):
                                                                  image_resolution[0])
             mad_data = np.array(f['1/EBSD/Data/Mean Angular Deviation']).reshape(image_resolution[1],
                                                                                image_resolution[0])
+            coord_data = 0.1 * np.stack(np.indices((image_resolution[1],image_resolution[0])), axis=-1)
             
             # Calculate shift using phase cross correlation
             shift, _, _ = phase_cross_correlation(reference_image, Sn_data, normalization=None)
+            coord_data += shift[None, None, :]
             shift = shift.astype('int')
             
             # Apply shift to all data
@@ -71,6 +74,8 @@ def load_and_process_h5_files(data_folder, output_folder):
             Nb_data = Nb_data[crop]
             phase_data = phase_data[crop]
             mad_data = mad_data[crop]
+
+            coord_data = coord_data[crop]
             
             # Scale Euler angles
             euler_data[:,:,0] = euler_data[:,:,0]/(2*np.pi)
@@ -83,6 +88,14 @@ def load_and_process_h5_files(data_folder, output_folder):
             euler_cube[:,:,i,:] = euler_data
             phase_cube[:,:,i] = phase_data
             mad_cube[:,:,i] = mad_data
+
+            coord_data = np.concatenate((coord_data, i*0.1*np.ones((coord_data.shape[0], coord_data.shape[1], 1))), axis=-1)
+
+            points.append(coord_data.reshape(coord_data.shape[0]*coord_data.shape[1], 3))
+            euler_flat.append(euler_data.reshape(euler_data.shape[0]*euler_data.shape[1], 3))
+
+    points = np.concatenate(points, axis=0)
+    euler_flat = np.concatenate(euler_flat, axis=0)
     
     # Create coordinate grid (in μm)
     ind = np.indices(Sn_cube.shape)
@@ -97,10 +110,10 @@ def load_and_process_h5_files(data_folder, output_folder):
     np.save(os.path.join(output_folder, 'mad_cube.npy'), mad_cube)
     
     # Create and save flattened versions
-    points = coord_cube.reshape(coord_cube.shape[0]*coord_cube.shape[1]*coord_cube.shape[2],coord_cube.shape[3])  # Reshape to (n_points, 3)
+    # points = coord_cube.reshape(coord_cube.shape[0]*coord_cube.shape[1]*coord_cube.shape[2],coord_cube.shape[3])  # Reshape to (n_points, 3)
     Sn_flat = Sn_cube.flatten()  # Reshape to (n_points,)
     Nb_flat = Nb_cube.flatten()  # Reshape to (n_points,)
-    euler_flat = euler_cube.reshape(euler_cube.shape[0]*euler_cube.shape[1]*euler_cube.shape[2],euler_cube.shape[3])  # Reshape to (n_points, 3)
+    # euler_flat = euler_cube.reshape(euler_cube.shape[0]*euler_cube.shape[1]*euler_cube.shape[2],euler_cube.shape[3])  # Reshape to (n_points, 3)
     phase_flat = phase_cube.flatten()  # Reshape to (n_points,)
     mad_flat = mad_cube.flatten()  # Reshape to (n_points,)
     
@@ -111,6 +124,7 @@ def load_and_process_h5_files(data_folder, output_folder):
     np.save(os.path.join(output_folder, 'euler_flat.npy'), euler_flat)
     np.save(os.path.join(output_folder, 'phase_flat.npy'), phase_flat)
     np.save(os.path.join(output_folder, 'mad_flat.npy'), mad_flat)
+
     
     return coord_cube, Sn_cube, Nb_cube, euler_cube, phase_cube, mad_cube
 
