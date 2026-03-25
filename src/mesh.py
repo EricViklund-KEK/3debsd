@@ -151,7 +151,8 @@ class Mesh3D:
 
         vor = Voronoi(coordinates)
 
-
+        # Scipy's Voronoi implementation does not define the edges the make up the ridges, so we need to create them ourselves. 
+        # We also need to add vertices for the infinite ridges, which we will place far away from the centroid of the points in the direction of the ridge.
         vertices = vor.vertices.copy()
         ridge_vertices = vor.ridge_vertices.copy()
 
@@ -194,6 +195,9 @@ class Mesh3D:
             for region_ind in ridge:
                 region_ridges[region_ind].append(ridge_ind)
 
+
+
+        # Create sparse matrices for vertex-edge, edge-face, and face-domain relationships
         T_VE = csr_array((vertices.shape[0],edges.shape[0]),dtype='bool')
         T_EF = csr_array((edges.shape[0],len(ridge_edges)),dtype='bool')
         T_FD = csr_array((len(ridge_edges),len(vor.regions)),dtype='bool')
@@ -212,17 +216,15 @@ class Mesh3D:
 
         T_FD[ridge_ind,region_ind] = True
 
+
+
+        # Map data points to Voronoi domains
         DP_map = [0]*len(vor.regions)
         for point, domain_ind in enumerate(vor.point_region):
             DP_map[domain_ind] = point
 
+        # Identify faces that create the bounds
         outside_domains = is_outside_bounds(coordinates[DP_map], bounds)
-
-        misorientations = rotations[vor.ridge_points[:,0]] * rotations[vor.ridge_points[:,1]].inv()
-        misorientations = np.linalg.norm(misorientations.as_rotvec(),axis=-1)
-
-        phase_boundaries = phase_flat[vor.ridge_points[:,0]] != phase_flat[vor.ridge_points[:,1]]
-
         is_out = np.zeros(T_FD.shape[1], dtype=bool)
         is_out[outside_domains] = True
 
@@ -231,12 +233,22 @@ class Mesh3D:
         T_FDin = T_FD[:, ~is_out]
         boundary_faces = T_FDout.max(axis=1) * T_FDin.max(axis=1)
 
+
+        # Identify grain boundaries, treat bounds as grain boundaries for visualization]
+        misorientations = rotations[vor.ridge_points[:,0]] * rotations[vor.ridge_points[:,1]].inv()
+        misorientations = np.linalg.norm(misorientations.as_rotvec(),axis=-1)
+
+        phase_boundaries = phase_flat[vor.ridge_points[:,0]] != phase_flat[vor.ridge_points[:,1]]
+
         GBs = ((misorientations > 0.05) + phase_boundaries) * T_FDin.max(axis=1)
         GBs = GBs + boundary_faces
 
+        # Compute the adjacency matrices
         A_DGB = csr_array((T_FD.shape[1],T_FD.shape[1]))
         T_FDGB = csr_array(T_FD.shape)
 
+
+        # Multiply T_FD by GBs to get T_FDGB, which will have True for faces that are grain boundaries and False otherwise
         T_FDGB = T_FD * GBs[:,None]
         T_FDGB.eliminate_zeros()
 
@@ -250,7 +262,7 @@ class Mesh3D:
 
 
 
-
+        # Find the grains by finding connected components in the non-grain boundary adjacency matrix using breadth first search. 
         remaining_regions = np.arange(T_FD.shape[1])[~outside_domains]
         grains = []
 
@@ -265,34 +277,30 @@ class Mesh3D:
 
             grains.append(grain_regions)
 
+        # Create a sparse matrix to represent the point-domain relationships
         T_PD = csr_array((len(vor.point_region),len(vor.regions)),dtype='bool')
-
         point_ind = np.arange((len(vor.point_region)))
         domain_ind = vor.point_region
-
         T_PD[point_ind,domain_ind] = True
 
+        # Map grains to their phases
         grain_phase = []
         for grain_indices in grains:
             point_ind = T_PD[:,grain_indices].nonzero()[0]
             grain_phase.append(phase_flat[point_ind])
 
+        # Create a sparse matrix to represent the domain-grain relationships
         T_DG = csr_array((len(vor.regions),len(grains)),dtype='bool')
-
         grain_ind, domain_ind = np.array([[i,domain] for i, grain in enumerate(grains) for domain in grain]).T
-
         T_DG[domain_ind,grain_ind] = True
 
+        # Compute the face-grain relationship
         B_D = T_DG @ T_DG.T
         B_D.eliminate_zeros()
         subgrain_matrix = A_DGB * B_D
         gb_matrix = A_DGB - subgrain_matrix
         T_FG = (T_FD @ gb_matrix @ T_DG) * (T_FD @ T_DG)
 
-        grain_phase = []
-        for grain_indices in grains:
-            point_ind = T_PD[:,grain_indices].nonzero()[0]
-            grain_phase.append(phase_flat[point_ind])
 
         self.vor = vor
         self.T_FG = T_FG
@@ -340,11 +348,13 @@ class Mesh3D:
             new_triangle = [old_to_new[idx] for idx in triangle]
             new_GB_vertices.append(new_triangle)
 
-        grain_mesh = pv.PolyData.from_irregular_faces(new_vertices, new_GB_vertices).connectivity('largest').triangulate().clean().compute_normals(auto_orient_normals=True)  
-
+        grain_mesh = pv.PolyData\
+            .from_irregular_faces(new_vertices, new_GB_vertices)\
+            .connectivity('largest')\
+            .triangulate()\
+            .clean()\
+            .compute_normals(auto_orient_normals=True)
 
         polydata = grain_mesh
 
-
         return polydata
-        
