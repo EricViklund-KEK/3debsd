@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "3debsd-grain-mesher"
+version = "0.1.0"
+description = "Grain boundary reconstruction algorithm for 3D EBSD data"
+readme = "README.md"
+authors = [
+    { name="Eric Viklund", email="eric.viklund@kek.jp" }
+]
+license = { text = "MIT" }
+dependencies = [
+    "numpy",
+    "scipy",
+    "pyvista"
+]
+
+[project.urls]
+Homepage = "https://github.com/EricViklund-KEK/3debsd"
