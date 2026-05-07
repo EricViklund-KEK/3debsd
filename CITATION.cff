@@ -1,0 +1,16 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: EBSD-Voro-Py
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: Eric
+    family-names: Viklund
+    email: eric.viklund@kek.jp
+    affiliation: KEK
+    orcid: 'https://orcid.org/0000-0003-1982-0597'
+license: GPL-3.0
