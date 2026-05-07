@@ -103,6 +103,8 @@ The algorithm itself is implemented using only scipy and numpy as dependencies. 
 
 Once the mesh is constructed, the plot_grain method can be used to generate pyvista meshes for each reconstructed grain by passing an integer id.
 
+See the [documentation](https://ericviklund-kek.github.io/3debsd/) for more details.
+
 # Figures
 
 These are some animated figures which could not be included in the paper.
