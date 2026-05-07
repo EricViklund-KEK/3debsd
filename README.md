@@ -107,13 +107,9 @@ Once the mesh is constructed, the plot_grain method can be used to generate pyvi
 
 These are some animated figures which could not be included in the paper.
 
+https://github.com/user-attachments/assets/78a67e58-c96f-4f11-bb83-0570f377cd28
 
-<figure>
-    https://github.com/user-attachments/assets/78a67e58-c96f-4f11-bb83-0570f377cd28
-    <figcaption>
-        A horizontal slice of a Nb3Sn thin film on a Nb substrate. The slice plane is colored based on the Sn concentration.
-    </figcaption>
-</figure>
+A horizontal slice of a Nb3Sn thin film on a Nb substrate. The slice plane is colored based on the Sn concentration.
 
 # References
 
