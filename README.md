@@ -51,7 +51,7 @@ $$\mathbf{I}^{D,G}_{ij} =
 \end{cases}$$
 
 <figure>
-    <image src="output/algo_diagram.png" width="100%" controls>
+    <image src="figures/algo_diagram.png" width="100%" controls>
     </image>
     <figcaption>
         Reconstructing grain boundaries from unstructured point measurements of grain orientation using Voronoi decomposition and graph search.
