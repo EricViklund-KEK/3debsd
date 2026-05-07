@@ -51,7 +51,7 @@ $$\mathbf{I}^{D,G}_{ij} =
 \end{cases}$$
 
 <figure>
-    <image src="./output/algo_diagram.png" width="100%" controls>
+    <image src="output/algo_diagram.png" width="100%" controls>
     </image>
     <figcaption>
         Reconstructing grain boundaries from unstructured point measurements of grain orientation using Voronoi decomposition and graph search.
@@ -108,7 +108,7 @@ Once the mesh is constructed, the plot_grain method can be used to generate pyvi
 These are some animated figures which could not be included in the paper.
 
 <figure>
-    <video src="./movie_4.mp4" width="100%" controls>
+    <video src="animations/movie_4.mp4" width="100%" controls>
         <p>Your browser doesn't support HTML5 video. You can download the animated figures directly from this repository.</p>
     </video>
     <figcaption>
