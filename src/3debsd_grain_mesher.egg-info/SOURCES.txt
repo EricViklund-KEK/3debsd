@@ -1,9 +1,0 @@
-LICENSE
-README.md
-pyproject.toml
-src/__init__.py
-src/mesh.py
-src/3debsd_grain_mesher.egg-info/PKG-INFO
-src/3debsd_grain_mesher.egg-info/SOURCES.txt
-src/3debsd_grain_mesher.egg-info/dependency_links.txt
-src/3debsd_grain_mesher.egg-info/top_level.txt
